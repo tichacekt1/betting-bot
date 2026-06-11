@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=infents) # Opraven překlep v intents
 
 INHOUSE_BOT_ID = 1001168331996409856
 
@@ -28,26 +28,35 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    print(f"DEBUG: Bot vidí zprávu od {message.author.name}: {message.content}")
-    
     if message.author == bot.user:
         return
     
+    # Debug: uvidíme, co všechno bot dostává
     if message.author.id == INHOUSE_BOT_ID:
-        embed_text = ""
+        print(f"DEBUG: Bot vidí zprávu od In House Queue.")
+        
+        # Sestavíme veškerý text, který bot poslal
+        obsah = message.content.lower()
+        embed_data = ""
         for embed in message.embeds:
-            if embed.description: embed_text += embed.description.lower()
-            if embed.title: embed_text += embed.title.lower()
-
-        if "inhouse queue" in embed_text:
+            if embed.title: embed_data += embed.title.lower()
+            if embed.description: embed_data += embed.description.lower()
+            for field in embed.fields:
+                embed_data += field.value.lower()
+        
+        celkovy_text = obsah + embed_data
+        
+        # Hledáme klíčové ukazatele startu hry
+        if "inhouse queue" in celkovy_text or "game is starting" in celkovy_text or "game was found" in celkovy_text:
+            print("DEBUG: Podmínka pro start hry splněna!")
             try:
                 await message.channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
                 print("Sázky úspěšně vypsány.")
             except Exception as e:
-                print(f"CHYBA: {e}")
+                print(f"CHYBA při odesílání: {e}")
         else:
-            print("DEBUG: Zpráva od InHouse bota ignorována.")
-
+            print(f"DEBUG: Zpráva ignorována. Obsah: {celkovy_text[:50]}...")
+    
     await bot.process_commands(message)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
