@@ -1,43 +1,28 @@
 import discord
 from discord.ext import commands
-import os
-from dotenv import load_dotenv
-import logging
 
-# Nastavení logování
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ... (předchozí nastavení bota zůstává stejné)
 
-# Definice bota a intentů
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+class BettingView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-@bot.event
-async def on_ready():
-    logger.info(f"Bot běží jako {bot.user}")
+    @discord.ui.button(label="Vsadit na RED", style=discord.ButtonStyle.red)
+    async def red_bet(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"{interaction.user.name} vsadil na RED!", ephemeral=True)
+
+    @discord.ui.button(label="Vsadit na BLUE", style=discord.ButtonStyle.primary)
+    async def blue_bet(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"{interaction.user.name} vsadil na BLUE!", ephemeral=True)
 
 @bot.event
 async def on_message(message):
-    # Logování autora zprávy
-    if message.author != bot.user:
-        logger.info(f"Zpráva od {message.author.name} (ID: {message.author.id}) v kanálu #{message.channel}")
-
-    # Kontrola zpráv od In House Queue bota (ID: 1001168331996409856)
-    if message.author.id == 1001168331996409856:
-        if message.embeds:
-            embed = message.embeds[0]
-            logger.info("!!! ZACHYCEN EMBED OD INHOUSE BOTA !!!")
-            
-            # Vypíše všechna pole, abychom viděli strukturu jmen hráčů
-            for i, field in enumerate(embed.fields):
-                logger.info(f"Field {i} - Název: {field.name} | Hodnota: {field.value}")
-        else:
-            logger.info("Zpráva od InHouse bota neobsahuje žádný Embed.")
+    if message.author.id == 1001168331996409856 and message.embeds:
+        embed = message.embeds[0]
+        # Hledáme, jestli embed obsahuje týmy Red/Blue
+        has_teams = any("Red" in field.name or "Blue" in field.name for field in embed.fields)
+        
+        if has_teams:
+            await message.channel.send("💰 **Sázky otevřeny!** Kdo vyhraje tento zápas?", view=BettingView())
 
     await bot.process_commands(message)
-
-# Spuštění bota
-token = os.getenv("DISCORD_TOKEN")
-bot.run(token)
