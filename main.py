@@ -7,7 +7,9 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
 INHOUSE_BOT_ID = 1001168331996409856
+TARGET_CHANNEL_ID = 1507685027444555980
 
 class BettingView(discord.ui.View):
     def __init__(self):
@@ -27,23 +29,21 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Sledujeme InHouse bota
     if message.author.id == INHOUSE_BOT_ID:
         full_text = (message.content + " " + " ".join([e.title or "" for e in message.embeds]) + " " + " ".join([e.description or "" for e in message.embeds])).lower()
         
-        # Pokud vidíme start hry
         if "game is starting" in full_text:
-            try:
-                # Píšeme přímo tam, kde se to stalo (to je nejjistější cesta)
-                await message.channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
-                print(f"Sázky vypsány do kanálu: {message.channel.name}")
-            except discord.Forbidden:
-                print(f"CHYBA: Bot nemá oprávnění psát do kanálu {message.channel.name}!")
-            except Exception as e:
-                print(f"CHYBA: {e}")
-        else:
-            # Jen pro info, že bot zprávu viděl, ale není to start
-            pass
+            # Bot nyní cílí PŘÍMO na tvoje ID kanálu
+            target_channel = bot.get_channel(TARGET_CHANNEL_ID)
+            
+            if target_channel:
+                try:
+                    await target_channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
+                    print(f"Sázky úspěšně vypsány do kanálu: {target_channel.name}")
+                except discord.Forbidden:
+                    print(f"CHYBA: Bot nemá právo psát do kanálu s ID {TARGET_CHANNEL_ID}!")
+            else:
+                print(f"CHYBA: Bot nevidí kanál s ID {TARGET_CHANNEL_ID}. Zkontroluj, jestli tam bot je!")
 
     await bot.process_commands(message)
 
