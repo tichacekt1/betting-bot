@@ -36,7 +36,6 @@ async def vyhodnot_automaticky(channel, vitez):
         vitezove_text = f"🏆 **Zápas skončil! Vítěz: {vitez}**\n\n**Výplatní listina:**\n"
         for user, saska in data.items():
             if saska['tym'] == vitez:
-                # Výpočet podílu z banku
                 vyhra = (int(saska['castka']) / sum_vitezny) * total_bank
                 vitezove_text += f"✅ {user}: vyhrál **{round(vyhra)}**\n"
         await results_channel.send(vitezove_text)
@@ -50,14 +49,19 @@ class BettingModal(discord.ui.Modal, title='Vsadit na zápas'):
         super().__init__()
         self.tym = tym
     async def on_submit(self, interaction: discord.Interaction):
-        # 1. Kontrola zůstatku přes UnbelievaBoat API
+        # 1. Kontrola zůstatku
         url = f"https://unbelievaboat.com/api/v1/guilds/{UB_GUILD_ID}/users/{interaction.user.id}"
         resp = requests.get(url, headers={"Authorization": UB_TOKEN})
-        zustatek = resp.json().get("cash", 0) if resp.status_code == 200 else 0
+        
+        # DEBUG VÝPIS - toto je důležité!
+        print(f"DEBUG - API Response: {resp.text}")
+        
+        data = resp.json() if resp.status_code == 200 else {}
+        zustatek = data.get("cash", 0) + data.get("bank", 0)
         
         vsazeno = int(self.castka.value)
         if vsazeno > zustatek or vsazeno <= 0:
-            await interaction.response.send_message("❌ Nedostatečný zůstatek nebo neplatná částka!", ephemeral=True)
+            await interaction.response.send_message(f"❌ Nedostatečný zůstatek! (Bot vidí: {zustatek})", ephemeral=True)
             return
 
         # 2. Uložení sázky
@@ -84,11 +88,9 @@ class BettingView(discord.ui.View):
 @bot.event
 async def on_message(message):
     if message.author.id == INHOUSE_BOT_ID:
-        # Automatické vyhodnocení
         if "was declared winner!" in message.content.lower():
             vitez = "RED" if "red team" in message.content.lower() else "BLUE"
             await vyhodnot_automaticky(message.channel, vitez)
-        # Otevření sázek při novém lobby
         elif message.embeds and any("Red" in f.name or "Blue" in f.name for f in message.embeds[0].fields):
             await message.channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
     await bot.process_commands(message)
