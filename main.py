@@ -3,196 +3,222 @@ from discord.ext import commands
 import os
 from dotenv import load_dotenv
 import logging
+import re
+import aiohttp
 
-# Load environment variables
+# Načtení proměnných prostředí
 load_dotenv()
 
-# Setup logging
+# Nastavení logování
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Bot setup
+# Nastavení Discord bota
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Store active bets
+# Fixní konfigurace podle tvého serveru
+GUILD_ID = 709482555300118580         # ID tvého serveru
+INHOUSE_BOT_ID = 1001168331996409856   # ID tvého InHouse Queue bota
+
+# Paměť pro aktivní sázky
 active_bets = {}
+
+# Pomocná funkce pro komunikaci s UnbelivaBOAT API
+async def modify_user_balance(user_id: int, amount: int, reason: str):
+    unb_token = os.getenv("UNB_TOKEN")
+    if not unb_token:
+        logger.error("UNB_TOKEN chybí v .env souboru!")
+        return False
+    
+    url = f"https://unbelivaboat.com/api/v1/guilds/{GUILD_ID}/users/{user_id}"
+    headers = {"Authorization": unb_token, "Content-Type": "application/json"}
+    data = {"cash": amount, "reason": reason}
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.patch(url, headers=headers, json=data) as response:
+            if response.status == 200:
+                return True
+            else:
+                resp_text = await response.text()
+                logger.error(f"UnbelivaBOAT API error ({response.status}): {resp_text}")
+                return False
 
 @bot.event
 async def on_ready():
-    logger.info(f"Bot is ready! Logged in as {bot.user}")
+    logger.info(f"Sázkový bot je připraven! Přihlášen jako {bot.user}")
     try:
         synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} command(s)")
+        logger.info(f"Synchronizováno {len(synced)} příkazů.")
     except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
+        logger.error(f"Chyba při synchronizaci příkazů: {e}")
 
-@bot.tree.command(name="create_bet", description="Create a new bet for a match")
-@discord.app_commands.describe(
-    match_id="ID of the InHouse match",
-    team_a="Team A name",
-    team_b="Team B name"
-)
-async def create_bet(interaction: discord.Interaction, match_id: str, team_a: str, team_b: str):
-    """Create a new betting match"""
-    try:
-        if match_id in active_bets:
-            await interaction.response.send_message(f"❌ Bet for match {match_id} already exists!", ephemeral=True)
-            return
-        
-        active_bets[match_id] = {
-            "team_a": team_a,
-            "team_b": team_b,
-            "bets": {},
-            "status": "active"
-        }
-        
-        embed = discord.Embed(
-            title=f"🎮 New Bet Created - Match {match_id}",
-            description=f"**{team_a}** vs **{team_b}**",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="Status", value="🟢 Active", inline=False)
-        embed.add_field(name="Instructions", value="Use `/place_bet` to place your bet!", inline=False)
-        
-        await interaction.response.send_message(embed=embed)
-        logger.info(f"Created bet for match {match_id}")
-        
-    except Exception as e:
-        logger.error(f"Error creating bet: {e}")
-        await interaction.response.send_message(f"❌ Error: {str(e)}", ephemeral=True)
+# Sledování vytvoření nového lobby kanálu
+@bot.event
+async def on_guild_channel_create(channel):
+    if isinstance(channel, discord.TextChannel) and channel.guild.id == GUILD_ID:
+        if channel.name.startswith("lobby-"):
+            logger.info(f"Detekován nový kanál: {channel.name}, čekám na infobox od InHouse bota...")
 
-@bot.tree.command(name="place_bet", description="Place a bet on a match")
-@discord.app_commands.describe(
-    match_id="ID of the match to bet on",
-    team="Team to bet on (A or B)",
-    amount="Amount to bet"
-)
-async def place_bet(interaction: discord.Interaction, match_id: str, team: str, amount: int):
-    """Place a bet on a specific team"""
-    try:
-        if match_id not in active_bets:
-            await interaction.response.send_message(f"❌ No active bet for match {match_id}", ephemeral=True)
-            return
+# Sledování zpráv v novém lobby a vyhodnocování zápasů
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    if isinstance(message.channel, discord.TextChannel) and message.channel.name.startswith("lobby-"):
         
+        # Pokud zprávu poslal InHouse bot, zkusíme založit sázku
+        if message.author.id == INHOUSE_BOT_ID:
+            full_text = message.content or ""
+            if message.embeds:
+                for embed in message.embeds:
+                    if embed.title: full_text += "\n" + embed.title
+                    if embed.description: full_text += "\n" + embed.description
+                    for field in embed.fields:
+                        full_text += f"\n{field.name} {field.value}"
+            
+            match_id_match = re.search(r"Match ID:\s*([a-zA-Z0-9]+)", full_text, re.IGNORECASE) or re.search(r"GameID\s*([a-zA-Z0-9]+)", full_text, re.IGNORECASE)
+            
+            if match_id_match:
+                match_id = match_id_match.group(1)
+                
+                if match_id not in active_bets:
+                    active_bets[match_id] = {
+                        "team_a": "BLUE",
+                        "team_b": "RED",
+                        "bets": {},
+                        "status": "active",
+                        "channel_id": message.channel.id
+                    }
+                    
+                    embed = discord.Embed(
+                        title=f"🎮 Sázky automaticky otevřeny! • Zápas {match_id}",
+                        description="🔵 **BLUE** vs 🔴 **RED**\n\nVsaďte si na vítěze tohoto zápasu pomocí příkazu `/place_bet`!",
+                        color=discord.Color.blue()
+                    )
+                    embed.add_field(name="Sázkový systém", value="Jedná se o pool sázky (totalizátor). Celkový bank poražených se na konci spravedlivě rozdělí mezi výherce podle výše jejich sázky.", inline=False)
+                    embed.add_field(name="Stav sázek", value="🟢 Sázky jsou OTEVŘENY", inline=False)
+                    
+                    await message.channel.send(embed=embed)
+                    logger.info(f"Automaticky spuštěny sázky pro zápas {match_id} v kanálu {message.channel.name}")
+                    return
+
+        # Pokud někdo v lobby napíše konec zápasu
+        content_lower = message.content.lower()
+        if "!win" in content_lower or "/win" in content_lower or "/winner" in content_lower:
+            current_match_id = None
+            for m_id, data in active_bets.items():
+                if data["channel_id"] == message.channel.id and data["status"] == "active":
+                    current_match_id = m_id
+                    break
+            
+            if current_match_id:
+                winner = None
+                if "blue" in content_lower:
+                    winner = "A"
+                elif "red" in content_lower:
+                    winner = "B"
+                
+                if winner:
+                    await process_match_payout(message.channel, current_match_id, winner)
+
+    await bot.process_commands(message)
+
+# Výpočet podílů z banku a odeslání peněz
+async def process_match_payout(channel, match_id: str, winner: str):
+    bet_data = active_bets[match_id]
+    bet_data["status"] = "completed"
+    
+    winning_team_name = bet_data["team_a"] if winner == "A" else bet_data["team_b"]
+    total_pool = 0
+    total_winning_bets = 0
+    
+    for user_id, user_bets in bet_data["bets"].items():
+        total_pool += sum(user_bets.values())
+        if winner in user_bets:
+            total_winning_bets += user_bets[winner]
+            
+    embed = discord.Embed(
+        title=f"🏆 Zápas {match_id} ukončen!",
+        description=f"Tým **{winning_team_name}** vyhrál zápas!",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name="📊 Celkový bank na stole", value=f"**{total_pool} coins**", inline=True)
+    
+    if total_winning_bets > 0:
+        odds = round(total_pool / total_winning_bets, 2)
+        embed.add_field(name="📈 Výsledný Kurz", value=f"**x{odds}**", inline=True)
+        
+        winners_text = []
+        for user_id, user_bets in bet_data["bets"].items():
+            if winner in user_bets:
+                user_share = user_bets[winner] / total_winning_bets
+                winnings = int(total_pool * user_share)
+                profit = winnings - user_bets[winner]
+                
+                success = await modify_user_balance(user_id, winnings, f"Vyhraná sázka - Zápas {match_id}")
+                
+                if success:
+                    winners_text.append(f"<@{user_id}> vyhrává **{winnings} coins** (Čistý zisk: +{profit})")
+                else:
+                    winners_text.append(f"<@{user_id}> vyhrál **{winnings} coins**, ale nepodařilo se kontaktovat banku.")
+        
+        embed.add_field(name="💰 Výherci sázek", value="\n".join(winners_text), inline=False)
+    else:
+        embed.add_field(name="💰 Výherci sázek", value="Nikdo nevsadil na vítězný tým. Bank propadá serveru.", inline=False)
+        
+    await channel.send(embed=embed)
+
+# Lomítkový příkaz pro podání sázky
+@bot.tree.command(name="place_bet", description="Vsadit si na zápas v tomto lobby")
+@discord.app_commands.describe(team="Tým (A = BLUE, B = RED)", amount="Částka sázky")
+async def place_bet(interaction: discord.Interaction, team: str, amount: int):
+    try:
+        match_id = None
+        for m_id, data in active_bets.items():
+            if data["channel_id"] == interaction.channel_id and data["status"] == "active":
+                match_id = m_id
+                break
+                
+        if not match_id:
+            await interaction.response.send_message("❌ V tomto kanálu momentálně neběží žádná aktivní sázka.", ephemeral=True)
+            return
+            
         team = team.upper()
         if team not in ["A", "B"]:
-            await interaction.response.send_message("❌ Team must be 'A' or 'B'", ephemeral=True)
+            await interaction.response.send_message("❌ Neplatný tým! Zadej 'A' pro BLUE nebo 'B' pro RED.", ephemeral=True)
             return
-        
+            
         if amount <= 0:
-            await interaction.response.send_message("❌ Bet amount must be positive", ephemeral=True)
+            await interaction.response.send_message("❌ Částka sázky musí být vyšší než 0!", ephemeral=True)
             return
-        
+            
         user_id = interaction.user.id
+        team_name = active_bets[match_id]["team_a"] if team == "A" else active_bets[match_id]["team_b"]
+        
+        success = await modify_user_balance(user_id, -amount, f"Sázka na zápas {match_id}")
+        
+        if not success:
+            await interaction.response.send_message("❌ Sázku nebylo možné provést. Buď nemáš dostatek coinů v UnbelivaBOAT, nebo bot nemá práva.", ephemeral=True)
+            return
+            
         if user_id not in active_bets[match_id]["bets"]:
             active_bets[match_id]["bets"][user_id] = {}
+            
+        active_bets[match_id]["bets"][user_id][team] = active_bets[match_id]["bets"][user_id].get(team, 0) + amount
         
-        active_bets[match_id]["bets"][user_id][team] = amount
-        
-        team_name = active_bets[match_id][f"team_{team.lower()}"]
-        embed = discord.Embed(
-            title="✅ Bet Placed!",
-            description=f"You bet **{amount} coins** on **{team_name}**",
-            color=discord.Color.green()
-        )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.info(f"User {interaction.user.name} placed bet: {amount} on team {team}")
+        await interaction.response.send_message(f"✅ Úspěšně vsazeno **{amount} coins** na tým **{team_name}**!", ephemeral=True)
         
     except Exception as e:
-        logger.error(f"Error placing bet: {e}")
-        await interaction.response.send_message(f"❌ Error: {str(e)}", ephemeral=True)
+        logger.error(f"Chyba při podání sázky: {e}")
+        await interaction.response.send_message("❌ Nastala interní chyba při zpracování sázky.", ephemeral=True)
 
-@bot.tree.command(name="end_match", description="End a match and distribute winnings")
-@discord.app_commands.describe(
-    match_id="ID of the match",
-    winner="Winning team (A or B)"
-)
-async def end_match(interaction: discord.Interaction, match_id: str, winner: str):
-    """End a match and announce winner"""
-    try:
-        if match_id not in active_bets:
-            await interaction.response.send_message(f"❌ No active bet for match {match_id}", ephemeral=True)
-            return
-        
-        winner = winner.upper()
-        if winner not in ["A", "B"]:
-            await interaction.response.send_message("❌ Winner must be 'A' or 'B'", ephemeral=True)
-            return
-        
-        bet_data = active_bets[match_id]
-        winning_team = bet_data[f"team_{winner.lower()}"]
-        
-        # Calculate winnings
-        winners_list = []
-        for user_id, bets in bet_data["bets"].items():
-            if winner in bets:
-                winners_list.append({
-                    "user_id": user_id,
-                    "winnings": bets[winner]  # Zde byla opravena chyba (smazáno * 2)
-                })
-        
-        embed = discord.Embed(
-            title=f"🏆 Match {match_id} - Final Result",
-            description=f"**{winning_team}** wins!",
-            color=discord.Color.gold()
-        )
-        
-        if winners_list:
-            winners_text = "\n".join([f"<@{w['user_id']}> wins {w['winnings']} coins" for w in winners_list])
-            embed.add_field(name="Winners", value=winners_text, inline=False)
-        else:
-            embed.add_field(name="Winners", value="No winners for this match", inline=False)
-        
-        # Mark match as completed
-        active_bets[match_id]["status"] = "completed"
-        
-        await interaction.response.send_message(embed=embed)
-        logger.info(f"Match {match_id} ended. Winner: {winning_team}")
-        
-        # TODO: Here we would integrate with UnbelivaBOAT API to add coins to winners
-        
-    except Exception as e:
-        logger.error(f"Error ending match: {e}")
-        await interaction.response.send_message(f"❌ Error: {str(e)}", ephemeral=True)
-
-@bot.tree.command(name="bet_status", description="Check status of active bets")
-async def bet_status(interaction: discord.Interaction):
-    """Check all active bets"""
-    try:
-        if not active_bets:
-            await interaction.response.send_message("❌ No active bets", ephemeral=True)
-            return
-        
-        embed = discord.Embed(
-            title="📊 Active Bets",
-            color=discord.Color.blue()
-        )
-        
-        for match_id, data in active_bets.items():
-            if data["status"] == "active":
-                bet_count = len(data["bets"])
-                embed.add_field(
-                    name=f"Match {match_id}",
-                    value=f"{data['team_a']} vs {data['team_b']}\nBets placed: {bet_count}",
-                    inline=False
-                )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"Error checking bet status: {e}")
-        await interaction.response.send_message(f"❌ Error: {str(e)}", ephemeral=True)
-
-# Run the bot
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
     if not token:
-        logger.error("DISCORD_TOKEN not found in .env file")
+        logger.error("DISCORD_TOKEN nebyl nalezen v .env souboru!")
         exit(1)
-    
     bot.run(token)
