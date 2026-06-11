@@ -28,20 +28,24 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     if message.author.id == INHOUSE_BOT_ID:
-        # Sestavíme text z obsahu, titulu i popisu
         full_text = (message.content + " " + " ".join([e.title or "" for e in message.embeds]) + " " + " ".join([e.description or "" for e in message.embeds])).lower()
         
-        # Hledáme "game is starting" (to je to, co vidíme v terminálu)
         if "game is starting" in full_text:
-            # Hledáme kanál, který obsahuje "lobby" (v terminálu to psalo, že nenašel 'lobby-')
-            target_channel = discord.utils.get(message.guild.text_channels, name__contains="lobby")
+            # Oprava hledání: Projdeme kanály ručně, to funguje vždy
+            target_channel = None
+            for channel in message.guild.text_channels:
+                if "lobby" in channel.name.lower():
+                    target_channel = channel
+                    break
             
             if target_channel:
-                await target_channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
-                print(f"Sázky úspěšně vypsány do: {target_channel.name}")
+                try:
+                    await target_channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
+                    print(f"Sázky úspěšně vypsány do: {target_channel.name}")
+                except discord.Forbidden:
+                    print(f"CHYBA: Bot nemá právo psát do {target_channel.name}!")
             else:
-                # Debug: vypíše všechny kanály, abychom věděli, proč ho nenašel
-                print(f"DEBUG: Nenašel jsem kanál s 'lobby'. Kanály jsou: {[c.name for c in message.guild.text_channels]}")
+                print("DEBUG: Nenašel jsem žádný kanál obsahující 'lobby'.")
 
     await bot.process_commands(message)
 
