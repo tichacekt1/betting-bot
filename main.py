@@ -133,7 +133,7 @@ async def end_match(interaction: discord.Interaction, match_id: str, winner: str
             if winner in bets:
                 winners_list.append({
                     "user_id": user_id,
-                    "winnings": bets[winner] * 2  # Double their bet
+                    "winnings": bets[winner]  # Zde byla opravena chyba (smazáno * 2)
                 })
         
         embed = discord.Embed(
