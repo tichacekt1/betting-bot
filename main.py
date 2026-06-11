@@ -3,7 +3,6 @@ from discord.ext import commands
 import os
 from dotenv import load_dotenv
 import logging
-import re
 import aiohttp
 
 # Načtení proměnných prostředí
@@ -26,7 +25,7 @@ INHOUSE_BOT_ID = 1001168331996409856   # ID tvého InHouse Queue bota
 # Paměť pro aktivní sázky
 active_bets = {}
 
-# Pomocná funkce pro komunikaci s UnbelivaBOAT API
+# Pomocná funkce pro UnbelivaBOAT API
 async def modify_user_balance(user_id: int, amount: int, reason: str):
     unb_token = os.getenv("UNB_TOKEN")
     if not unb_token:
@@ -55,14 +54,18 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Chyba při synchronizaci příkazů: {e}")
 
-# Sledování vytvoření nového lobby kanálu a AUTOMATICKÉ otevření sázek
+# Sledování zpráv – zachycení zprávy od InHouse bota a vyhodnocování výher
 @bot.event
-async def on_guild_channel_create(channel):
-    if isinstance(channel, discord.TextChannel) and channel.guild.id == GUILD_ID:
-        if channel.name.startswith("lobby-"):
-            # Vytáhneme ID zápasu přímo z názvu kanálu (např. z lobby-33628ded dostaneme 33628ded)
-            match_id = channel.name.replace("lobby-", "")
-            logger.info(f"Detekován nový kanál: {channel.name}. Automaticky zakládám sázky pro zápas: {match_id}")
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    # Pokud přijde zpráva do lobby kanálu
+    if isinstance(message.channel, discord.TextChannel) and message.channel.name.startswith("lobby-"):
+        
+        # 1. AUTOMATICKÉ OTEVŘENÍ SÁZEK (Zprávu poslal InHouse bot a sázky ještě neběžely)
+        if message.author.id == INHOUSE_BOT_ID:
+            match_id = message.channel.name.replace("lobby-", "")
             
             if match_id not in active_bets:
                 active_bets[match_id] = {
@@ -70,11 +73,10 @@ async def on_guild_channel_create(channel):
                     "team_b": "RED",
                     "bets": {},
                     "status": "active",
-                    "channel_id": channel.id
+                    "channel_id": message.channel.id
                 }
                 
-                # Počkáme 2 sekundy, než InHouse bot pošle své úvodní zprávy, a pak pošleme sázkovou tabulku
-                await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.datetime.timedelta(seconds=2))
+                logger.info(f"InHouse bot poslal zprávu v {message.channel.name}. Zakládám sázky pro zápas: {match_id}")
                 
                 embed = discord.Embed(
                     title=f"🎮 Sázky automaticky otevřeny! • Zápas {match_id}",
@@ -85,21 +87,13 @@ async def on_guild_channel_create(channel):
                 embed.add_field(name="Stav sázek", value="🟢 Sázky jsou OTEVŘENY", inline=False)
                 
                 try:
-                    await channel.send(embed=embed)
-                    logger.info(f"Sázková tabulka úspěšně odeslána do {channel.name}")
+                    await message.channel.send(embed=embed)
+                    logger.info(f"Sázková tabulka úspěšně odeslána do {message.channel.name}")
                 except Exception as e:
-                    logger.error(f"Nepodařilo se poslat zprávu do nového kanálu: {e}")
+                    logger.error(f"Nepodařilo se poslat sázkovou tabulku: {e}")
 
-# Sledování zpráv pro vyhodnocení zápasů
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    if isinstance(message.channel, discord.TextChannel) and message.channel.name.startswith("lobby-"):
+        # 2. VYHODNOCENÍ ZÁPASU (Hráč poslal příkaz k ukončení)
         content_lower = message.content.lower()
-        
-        # Kontrola příkazů pro ukončení zápasu
         if "!win" in content_lower or "/win" in content_lower or "/winner" in content_lower:
             current_match_id = None
             for m_id, data in active_bets.items():
