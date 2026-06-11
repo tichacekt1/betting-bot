@@ -8,8 +8,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# IDs
 INHOUSE_BOT_ID = 1001168331996409856
-TARGET_CHANNEL_ID = 1507685027444555980
+BETTING_CHANNEL_ID = 1507685027444555980
+STATS_CHANNEL_ID = 1514649175931879455
+RESULTS_CHANNEL_ID = 1507869769787904040
+
+# Jednoduché úložiště sázek v paměti
+bets = {"red": 0, "blue": 0}
 
 class BettingView(discord.ui.View):
     def __init__(self):
@@ -17,34 +23,38 @@ class BettingView(discord.ui.View):
 
     @discord.ui.button(label="Vsadit RED", style=discord.ButtonStyle.red)
     async def red(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Zde voláš příkaz pro UnbelievaBoat (pokud máš nastavenou integraci)
+        # Pro začátek simulujeme přičtení do našeho počítadla
+        bets["red"] += 1 
         await interaction.response.send_message("✅ Sázka na RED přijata!", ephemeral=True)
+        await self.update_stats()
 
     @discord.ui.button(label="Vsadit BLUE", style=discord.ButtonStyle.primary)
     async def blue(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bets["blue"] += 1
         await interaction.response.send_message("✅ Sázka na BLUE přijata!", ephemeral=True)
+        await self.update_stats()
 
-@bot.event
-async def on_ready():
-    print(f'Bot {bot.user} je připraven!')
+    async def update_stats(self):
+        stats_channel = bot.get_channel(STATS_CHANNEL_ID)
+        if stats_channel:
+            await stats_channel.send(f"📊 **Aktuální sázky:** RED: {bets['red']} | BLUE: {bets['blue']}")
 
 @bot.event
 async def on_message(message):
-    if message.author.id == INHOUSE_BOT_ID:
-        full_text = (message.content + " " + " ".join([e.title or "" for e in message.embeds]) + " " + " ".join([e.description or "" for e in message.embeds])).lower()
-        
-        if "game is starting" in full_text:
-            # Bot nyní cílí PŘÍMO na tvoje ID kanálu
-            target_channel = bot.get_channel(TARGET_CHANNEL_ID)
-            
-            if target_channel:
-                try:
-                    await target_channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
-                    print(f"Sázky úspěšně vypsány do kanálu: {target_channel.name}")
-                except discord.Forbidden:
-                    print(f"CHYBA: Bot nemá právo psát do kanálu s ID {TARGET_CHANNEL_ID}!")
-            else:
-                print(f"CHYBA: Bot nevidí kanál s ID {TARGET_CHANNEL_ID}. Zkontroluj, jestli tam bot je!")
+    if message.author.id == INHOUSE_BOT_ID and "game is starting" in message.content.lower():
+        target_channel = bot.get_channel(BETTING_CHANNEL_ID)
+        if target_channel:
+            bets["red"] = 0 # Reset
+            bets["blue"] = 0
+            await target_channel.send("💰 **Sázky otevřeny!**", view=BettingView())
 
+    # Detekce příkazu /winner pro výsledky
+    if message.content.startswith("/winner"):
+        results_channel = bot.get_channel(RESULTS_CHANNEL_ID)
+        if results_channel:
+            await results_channel.send(f"🏆 **Výsledky zápasu:** RED: {bets['red']} vs BLUE: {bets['blue']}")
+    
     await bot.process_commands(message)
 
 bot.run(os.getenv("DISCORD_TOKEN"))
