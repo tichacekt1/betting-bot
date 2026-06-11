@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 import os
-import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,29 +27,21 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if message.author == bot.user:
-        return
-    
-    # Sledujeme pouze InHouse bota
     if message.author.id == INHOUSE_BOT_ID:
-        # Vytiskneme úplně všechno, co bot poslal, do terminálu, abychom to viděli
-        full_content = message.content.lower()
-        embed_info = ""
-        for embed in message.embeds:
-            embed_info += f" | Title: {embed.title} | Desc: {embed.description}"
+        # Sestavíme text z obsahu, titulu i popisu
+        full_text = (message.content + " " + " ".join([e.title or "" for e in message.embeds]) + " " + " ".join([e.description or "" for e in message.embeds])).lower()
         
-        print(f"DEBUG: InHouse bot poslal: {full_content} {embed_info.lower()}")
-
-        # Tady je uvolněná podmínka - hledáme jakoukoli zmínku o hře
-        if "game" in (full_content + embed_info.lower()):
-            target_channel = discord.utils.get(message.guild.text_channels, name__startswith="lobby-")
+        # Hledáme "game is starting" (to je to, co vidíme v terminálu)
+        if "game is starting" in full_text:
+            # Hledáme kanál, který obsahuje "lobby" (v terminálu to psalo, že nenašel 'lobby-')
+            target_channel = discord.utils.get(message.guild.text_channels, name__contains="lobby")
+            
             if target_channel:
                 await target_channel.send("💰 **Sázky otevřeny (10 min)!**", view=BettingView())
                 print(f"Sázky úspěšně vypsány do: {target_channel.name}")
             else:
-                print("DEBUG: Nenašel jsem kanál začínající 'lobby-'.")
-        else:
-            print("DEBUG: Zpráva ignorována (neobsahuje slovo 'game').")
+                # Debug: vypíše všechny kanály, abychom věděli, proč ho nenašel
+                print(f"DEBUG: Nenašel jsem kanál s 'lobby'. Kanály jsou: {[c.name for c in message.guild.text_channels]}")
 
     await bot.process_commands(message)
 
