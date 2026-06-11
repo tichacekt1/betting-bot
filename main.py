@@ -1,56 +1,48 @@
 import discord
 from discord.ext import commands
+import os
+from dotenv import load_dotenv
+
+# Načtení tokenu ze souboru .env
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Databáze v paměti: {user_id: {"team": "RED/BLUE"}}
-current_bets = {}
-betting_open = False
+# ID botů a kanálů (tady máš ta svoje)
+INHOUSE_BOT_ID = 1001168331996409856
+BETTING_CHANNEL_ID = 1507685027444555980
 
 @bot.event
 async def on_ready():
-    print('--- SÁZKOVÝ BOT JE READY ---')
+    print(f'--- BĚŽÍ JAKO {bot.user} ---')
 
 @bot.event
 async def on_message(message):
-    global betting_open
-    # Detekce startu hry od InHouse bota
-    if message.author.id == 1001168331996409856 and "game" in message.content.lower() and "starting" in message.content.lower():
-        betting_open = True
-        current_bets.clear()
-        view = BettingView()
-        channel = bot.get_channel(1507685027444555980)
-        await channel.send("💰 **Sázky otevřeny! Kdo vyhraje?**", view=view)
-    
+    # Ignorujeme zprávy od sebe sama
+    if message.author.id == bot.user.id:
+        return
+
+    # Sledujeme InHouse bota (hledáme začátek hry)
+    if message.author.id == INHOUSE_BOT_ID:
+        full_text = (message.content + " " + " ".join([e.title or "" for e in message.embeds]) + " " + " ".join([e.description or "" for e in message.embeds])).lower()
+        
+        if "game" in full_text and "starting" in full_text:
+            channel = bot.get_channel(BETTING_CHANNEL_ID)
+            if channel:
+                # Odeslání zprávy s tlačítky pro obchod
+                view = discord.ui.View()
+                view.add_item(discord.ui.Button(label="Sázka RED", style=discord.ButtonStyle.red, url="https://unbelievaboat.com/dashboard/777881248949338123/store"))
+                view.add_item(discord.ui.Button(label="Sázka BLUE", style=discord.ButtonStyle.primary, url="https://unbelievaboat.com/dashboard/777881248949338123/store"))
+                
+                await channel.send("💰 **Sázky otevřeny! Klikni a vsaď si v obchodu:**", view=view)
+                print("SÁZKA ODESLÁNA")
+            else:
+                print(f"CHYBA: Nemůžu najít kanál {BETTING_CHANNEL_ID}")
+
     await bot.process_commands(message)
 
-class BettingView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Vsadit RED", style=discord.ButtonStyle.red)
-    async def red(self, interaction: discord.Interaction, button: discord.ui.Button):
-        current_bets[interaction.user.id] = "RED"
-        await interaction.response.send_message("✅ Vsazeno na RED!", ephemeral=True)
-
-    @discord.ui.button(label="Vsadit BLUE", style=discord.ButtonStyle.primary)
-    async def blue(self, interaction: discord.Interaction, button: discord.ui.Button):
-        current_bets[interaction.user.id] = "BLUE"
-        await interaction.response.send_message("✅ Vsazeno na BLUE!", ephemeral=True)
-
-# Příkaz pro tebe: /winner RED nebo /winner BLUE
-@bot.command()
-async def winner(ctx, team: str):
-    global betting_open
-    if ctx.channel.id != 1507869769787904040: return # Jen v kanálu výsledků
-    
-    betting_open = False
-    team = team.upper()
-    winners = [uid for uid, t in current_bets.items() if t == team]
-    
-    result_text = f"🏆 **Vítěz: {team}**\n\nVýherci:\n" + "\n".join([f"<@{uid}>" for uid in winners])
-    await ctx.send(result_text)
-
-bot.run("TVŮJ_TOKEN")
+# Spuštění s načteným tokenem
+bot.run(TOKEN)
