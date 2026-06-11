@@ -5,8 +5,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 intents = discord.Intents.default()
-intents.message_content = True  # Toto je klíčové
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+INHOUSE_BOT_ID = 1001168331996409856
+TARGET_CHANNEL_ID = 1507685027444555980
+# Tvůj odkaz na obchod
+STORE_URL = "https://unbelievaboat.com/dashboard/777881248949338123/store"
+
+class BettingView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(label="Vsadit RED", style=discord.ButtonStyle.red, url=STORE_URL))
+        self.add_item(discord.ui.Button(label="Vsadit BLUE", style=discord.ButtonStyle.primary, url=STORE_URL))
 
 @bot.event
 async def on_ready():
@@ -14,19 +25,15 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Vypiš VŠECHNO, co bot vidí
-    print(f"DEBUG: Zpráva v kanálu {message.channel.name} od {message.author.name}: {message.content[:50]}")
-    
-    # Kód pro odeslání sázek, pokud to napíše InHouse bot
-    if message.author.id == 1001168331996409856:
-        print("DEBUG: NAŠEL JSEM INHOUSE BOTA!")
-        if "game is starting" in message.content.lower():
-            channel = bot.get_channel(1507685027444555980)
+    if message.author.id == INHOUSE_BOT_ID:
+        full_text = (message.content + " " + " ".join([e.title or "" for e in message.embeds]) + " " + " ".join([e.description or "" for e in message.embeds])).lower()
+        
+        # Detekce startu hry
+        if "game" in full_text and "starting" in full_text:
+            channel = bot.get_channel(TARGET_CHANNEL_ID)
             if channel:
-                await channel.send("💰 **Sázky otevřeny!**")
-                print("Sázka odeslána!")
-            else:
-                print("CHYBA: Nemůžu najít kanál 1507685027444555980!")
+                await channel.send("💰 **Sázky otevřeny!**", view=BettingView())
+                print("SÁZKA ODESLÁNA")
 
     await bot.process_commands(message)
 
