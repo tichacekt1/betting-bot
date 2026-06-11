@@ -55,59 +55,51 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Chyba při synchronizaci příkazů: {e}")
 
-# Sledování vytvoření nového lobby kanálu
+# Sledování vytvoření nového lobby kanálu a AUTOMATICKÉ otevření sázek
 @bot.event
 async def on_guild_channel_create(channel):
     if isinstance(channel, discord.TextChannel) and channel.guild.id == GUILD_ID:
         if channel.name.startswith("lobby-"):
-            logger.info(f"Detekován nový kanál: {channel.name}, čekám na infobox od InHouse bota...")
+            # Vytáhneme ID zápasu přímo z názvu kanálu (např. z lobby-33628ded dostaneme 33628ded)
+            match_id = channel.name.replace("lobby-", "")
+            logger.info(f"Detekován nový kanál: {channel.name}. Automaticky zakládám sázky pro zápas: {match_id}")
+            
+            if match_id not in active_bets:
+                active_bets[match_id] = {
+                    "team_a": "BLUE",
+                    "team_b": "RED",
+                    "bets": {},
+                    "status": "active",
+                    "channel_id": channel.id
+                }
+                
+                # Počkáme 2 sekundy, než InHouse bot pošle své úvodní zprávy, a pak pošleme sázkovou tabulku
+                await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.datetime.timedelta(seconds=2))
+                
+                embed = discord.Embed(
+                    title=f"🎮 Sázky automaticky otevřeny! • Zápas {match_id}",
+                    description="🔵 **BLUE** vs 🔴 **RED**\n\nVsaďte si na vítěze tohoto zápasu pomocí příkazu `/place_bet`!",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="Sázkový systém", value="Jedná se o pool sázky (totalizátor). Celkový bank poražených se na konci spravedlivě rozdělí mezi výherce podle výše jejich sázky.", inline=False)
+                embed.add_field(name="Stav sázek", value="🟢 Sázky jsou OTEVŘENY", inline=False)
+                
+                try:
+                    await channel.send(embed=embed)
+                    logger.info(f"Sázková tabulka úspěšně odeslána do {channel.name}")
+                except Exception as e:
+                    logger.error(f"Nepodařilo se poslat zprávu do nového kanálu: {e}")
 
-# Sledování zpráv v novém lobby a vyhodnocování zápasů
+# Sledování zpráv pro vyhodnocení zápasů
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
     if isinstance(message.channel, discord.TextChannel) and message.channel.name.startswith("lobby-"):
-        
-        # Pokud zprávu poslal InHouse bot, zkusíme založit sázku
-        if message.author.id == INHOUSE_BOT_ID:
-            full_text = message.content or ""
-            if message.embeds:
-                for embed in message.embeds:
-                    if embed.title: full_text += "\n" + embed.title
-                    if embed.description: full_text += "\n" + embed.description
-                    for field in embed.fields:
-                        full_text += f"\n{field.name} {field.value}"
-            
-            match_id_match = re.search(r"Match ID:\s*([a-zA-Z0-9]+)", full_text, re.IGNORECASE) or re.search(r"GameID\s*([a-zA-Z0-9]+)", full_text, re.IGNORECASE)
-            
-            if match_id_match:
-                match_id = match_id_match.group(1)
-                
-                if match_id not in active_bets:
-                    active_bets[match_id] = {
-                        "team_a": "BLUE",
-                        "team_b": "RED",
-                        "bets": {},
-                        "status": "active",
-                        "channel_id": message.channel.id
-                    }
-                    
-                    embed = discord.Embed(
-                        title=f"🎮 Sázky automaticky otevřeny! • Zápas {match_id}",
-                        description="🔵 **BLUE** vs 🔴 **RED**\n\nVsaďte si na vítěze tohoto zápasu pomocí příkazu `/place_bet`!",
-                        color=discord.Color.blue()
-                    )
-                    embed.add_field(name="Sázkový systém", value="Jedná se o pool sázky (totalizátor). Celkový bank poražených se na konci spravedlivě rozdělí mezi výherce podle výše jejich sázky.", inline=False)
-                    embed.add_field(name="Stav sázek", value="🟢 Sázky jsou OTEVŘENY", inline=False)
-                    
-                    await message.channel.send(embed=embed)
-                    logger.info(f"Automaticky spuštěny sázky pro zápas {match_id} v kanálu {message.channel.name}")
-                    return
-
-        # Pokud někdo v lobby napíše konec zápasu
         content_lower = message.content.lower()
+        
+        # Kontrola příkazů pro ukončení zápasu
         if "!win" in content_lower or "/win" in content_lower or "/winner" in content_lower:
             current_match_id = None
             for m_id, data in active_bets.items():
