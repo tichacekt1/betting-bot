@@ -5,6 +5,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# InHouse Queue bot ID
+INHOUSE_BOT_ID = 1001168331996409856
+
 class LobbyListener(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -14,8 +17,8 @@ class LobbyListener(commands.Cog):
     async def on_message(self, message):
         """Listen for Match Insights messages in lobby channels"""
         
-        # Ignore bot's own messages
-        if message.author.bot:
+        # Only listen to InHouse Queue bot
+        if message.author.id != INHOUSE_BOT_ID:
             return
         
         # Check if it's in a lobby channel
